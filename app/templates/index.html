@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Disease Prediction</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap">
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="left-panel">
+            <h2>Disease Prediction</h2>
+            
+            <form id="upload-form" enctype="multipart/form-data">
+                <label for="disease">Select Disease:</label>
+                <select id="disease" name="disease">
+                    <option value="pneumonia">Pneumonia</option>
+                    <option value="alzheimers">Alzheimer's</option>
+                    <option value="brain_tumor">Brain Tumor</option>
+                </select>
+                
+                <input type="file" id="file" name="file" accept="image/*" required>
+                <button type="submit">Predict</button>
+            </form>
+        </div>
+
+        <div class="right-panel" id="result-panel" style="display: none;">
+            <h2>Prediction Result</h2>
+            <div id="result"></div>
+
+            <div id="doctor-notes" style="display: none;">
+                <h3>Doctor's Notes</h3>
+                <textarea id="notes" placeholder="Enter medical observations here..."></textarea>
+                <button id="generate-report">Generate Report</button>
+            </div>
+            
+            <div id="generated-report" style="display: none;">
+                <h3>Generated Medical Report</h3>
+                <p id="report-content"></p>
+                <button id="download-report">Download Report</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById("upload-form").addEventListener("submit", function(event) {
+            event.preventDefault();
+
+            let formData = new FormData();
+            let fileInput = document.getElementById("file");
+            let diseaseInput = document.getElementById("disease");
+            
+            if (!fileInput.files.length) {
+                alert("Please upload an image before submitting.");
+                return;
+            }
+            
+            formData.append("file", fileInput.files[0]);
+            formData.append("disease", diseaseInput.value);
+
+            fetch("/predict", {
+                method: "POST",
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                let resultDiv = document.getElementById("result");
+                let resultPanel = document.getElementById("result-panel");
+                let doctorNotes = document.getElementById("doctor-notes");
+
+                if (data.error) {
+                    resultDiv.innerHTML = `<p style="color: red;">Error: ${data.error}</p>`;
+                    resultPanel.style.display = "block";
+                    doctorNotes.style.display = "none";
+                } else {
+                    resultDiv.innerHTML = `
+                        <p><strong>Disease:</strong> ${data.disease}</p>
+                        <p><strong>Prediction:</strong> ${data.prediction}</p>
+                        <img src="${data.image}" alt="Uploaded Image" style="max-width: 300px; display: block; margin-top: 10px;">
+                    `;
+                    resultPanel.style.display = "block";
+                    doctorNotes.style.display = "block";
+                }
+
+                fileInput.value = "";
+            })
+            .catch(error => {
+                alert("An error occurred. Please try again.");
+                console.error("Error:", error);
+            });
+        });
+
+        document.getElementById("generate-report").addEventListener("click", function() {
+            let notes = document.getElementById("notes").value.trim();
+            let disease = document.getElementById("disease").value;
+            let prediction = document.getElementById("result").textContent.trim();
+
+            if (!notes) {
+                alert("Please add notes before generating a report.");
+                return;
+            }
+
+            fetch("/generate_report", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ disease: disease, prediction: prediction, doctor_notes: notes })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert("Error generating report: " + data.error);
+                } else {
+                    document.getElementById("generated-report").style.display = "block";
+                    document.getElementById("report-content").innerText = data.report;
+                }
+            })
+            .catch(error => {
+                alert("An error occurred while generating the report.");
+                console.error("Error:", error);
+            });
+        });
+
+        document.getElementById("download-report").addEventListener("click", function() {
+            let reportContent = document.getElementById("report-content").innerText;
+            let blob = new Blob([reportContent], { type: "text/plain" });
+            let link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = "medical_report.txt";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+    </script>
+</body>
+</html>
