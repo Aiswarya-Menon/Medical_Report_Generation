@@ -92,3 +92,23 @@ textarea {
 #generate-report:hover {
     background: #218838;
 }
+
+.container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 80%;
+    margin: auto;
+}
+.left-panel, .right-panel {
+    width: 100%;
+    text-align: center;
+}
+
+#report-content {
+    text-align: left;
+    white-space: pre-wrap;  /* Ensures proper formatting with line breaks */
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+}
+

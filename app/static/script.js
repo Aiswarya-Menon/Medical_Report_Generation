@@ -72,8 +72,20 @@ document.getElementById("generateReport").addEventListener("click", async functi
         if (data.error) {
             alert("Error generating report: " + data.error);
         } else {
-            // Store the report data in local storage for retrieval in view_report.html
-            localStorage.setItem("generatedReport", JSON.stringify(data));
+            let fullReport = data.report;
+
+            // Remove text inside square brackets []
+            fullReport = fullReport.replace(/\[.*?\]/g, "").trim();
+
+            // Remove fields that are empty or have no meaningful data
+            fullReport = fullReport
+                .split("\n")
+                .map(line => line.trim()) // Trim spaces
+                .filter(line => line && !line.match(/:\s*$/)) // Remove empty fields
+                .join("\n");
+
+            // Store the cleaned-up report
+            localStorage.setItem("generatedReport", JSON.stringify({ fullReport }));
 
             // Open the report in a new tab
             window.open("/view_report", "_blank");
@@ -83,5 +95,3 @@ document.getElementById("generateReport").addEventListener("click", async functi
         alert("An error occurred while generating the report.");
     }
 });
-
-

@@ -1,0 +1,11 @@
+Flask
+numpy
+opencv-python
+python-dotenv
+torch
+torchvision
+Pillow
+tensorflow
+google-generativeai
+markdown
+beautifulsoup4

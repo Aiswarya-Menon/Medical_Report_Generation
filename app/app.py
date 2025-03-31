@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 import numpy as np
 import cv2
 import os
+from dotenv import load_dotenv
 import torch
 import torchvision.transforms as transforms
 from PIL import Image
@@ -9,10 +10,6 @@ import tensorflow as tf
 import google.generativeai as genai  # Gemini API
 import markdown
 from bs4 import BeautifulSoup
-
-from flask import send_file
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
 
 app = Flask(__name__)
 
@@ -35,29 +32,52 @@ class BrainTumorModel(torch.nn.Module):
     def forward(self, x):
         return self.resnet(x)
 
-# Initialize model and load weights
 brain_tumor_model = BrainTumorModel(num_classes=4)
 brain_tumor_model.load_state_dict(torch.load("models/brain_tumor_model.pth", map_location=torch.device('cpu')))
 brain_tumor_model.eval()
 
+# Load PyTorch Alzheimer's Model
+class AlzheimerModel(torch.nn.Module):
+    def __init__(self, num_classes=4):
+        super(AlzheimerModel, self).__init__()
+        self.resnet = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=False)
+        in_features = self.resnet.fc.in_features
+        self.resnet.fc = torch.nn.Sequential(
+            torch.nn.Linear(in_features, 512),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.5),
+            torch.nn.Linear(512, num_classes)
+        )
+
+    def forward(self, x):
+        return self.resnet(x)
+
+alzheimers_model = AlzheimerModel(num_classes=4)
+alzheimers_model.load_state_dict(torch.load("models/alzheimers_model.pth", map_location=torch.device('cpu')))
+alzheimers_model.eval()
+
 # Class labels for each disease
 class_labels = {
     "pneumonia": ['NORMAL', 'PNEUMONIA'],
-    "brain_tumor": ['glioma_tumor', 'meningioma_tumor', 'no_tumor', 'pituitary_tumor']
+    "brain_tumor": ['glioma_tumor', 'meningioma_tumor', 'no_tumor', 'pituitary_tumor'],
+    "alzheimers": ['Mild Dementia', 'Moderate Dementia', 'Non Demented', 'Very Mild Dementia']
 }
 
-# Define preprocessing for brain tumor model
-brain_tumor_transforms = transforms.Compose([
+# Define preprocessing for brain tumor and Alzheimer's models
+image_transforms = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
 # Configure Gemini API
-GEMINI_API_KEY = "AIzaSyBOWIQnRV6R3a6tMgyrsofph-4nQSNSf8k"  # Replace with actual API key
-genai.configure(api_key=GEMINI_API_KEY)
 
-# Select the correct Gemini model
+load_dotenv()
+
+# Get the API key
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Replace with actual API key
+genai.configure(api_key=GEMINI_API_KEY)
+# genai.configure(api_key=os.getenv("GOOGLE_API_KEY")) # Ensure GOOGLE_API_KEY is set in your environment
 gemini_model = genai.GenerativeModel("gemini-1.5-pro-latest")  # Use an available model
 
 @app.route('/')
@@ -75,29 +95,26 @@ def predict():
     if file.filename == '':
         return jsonify({"error": "No selected file"})
 
-    # Save the uploaded file
     image_path = os.path.join("static/uploads", file.filename)
     file.save(image_path)
 
-    # Load and preprocess the image
     if disease == "pneumonia":
         img = cv2.imread(image_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = cv2.resize(img, (120, 120))
-        img_array = np.expand_dims(img, axis=0) / 255.0  # Normalize
+        img_array = np.expand_dims(img, axis=0) / 255.0
 
-        # Predict using Pneumonia model
         prediction = pneumonia_model.predict(img_array)
         predicted_class = class_labels[disease][int(prediction[0][0] > 0.5)]
 
-    elif disease == "brain_tumor":
+    elif disease == "brain_tumor" or disease == "alzheimers":
         img = Image.open(image_path).convert('RGB')
-        img = brain_tumor_transforms(img)
-        img = img.unsqueeze(0)  # Add batch dimension
+        img_tensor = image_transforms(img).unsqueeze(0)
 
-        # Predict using Brain Tumor model
+        model = brain_tumor_model if disease == "brain_tumor" else alzheimers_model
+
         with torch.no_grad():
-            outputs = brain_tumor_model(img)
+            outputs = model(img_tensor)
             _, predicted = torch.max(outputs, 1)
             predicted_class = class_labels[disease][predicted.item()]
 
@@ -112,40 +129,31 @@ def generate_report():
     disease = data.get("disease", "")
     prediction = data.get("prediction", "")
     doctor_notes = data.get("doctor_notes", "")
+    image_path = data.get("image", "")
 
     if not disease or not prediction:
         return jsonify({"error": "Disease and prediction result required"})
 
-    # Upload image to Gemini
-    image_path = data.get("image", "")
-    gemini_image = genai.upload_file(image_path) if image_path else None
-
-    # Disease-specific prompts
     disease_prompts = {
         "pneumonia": "Provide a detailed medical report for a chest X-ray indicating {}.",
-        "brain_tumor": "Analyze the MRI scan and generate a comprehensive report for a detected {}."
+        "brain_tumor": "Analyze the MRI scan and generate a comprehensive report for a detected {}.",
+        "alzheimers": "Analyze the brain MRI and generate a comprehensive report for a patient with {}."
     }
-    
-    # Construct prompt dynamically
-    prompt_template = disease_prompts.get(disease, "Generate a professional medical report for {}.")
-    prompt = prompt_template.format(prediction)
 
-    # Include doctor's notes if available
+    prompt_template = disease_prompts.get(disease, "Generate a professional medical report for {}. Dont include incomplete data. Make the report a concise one")
+    prompt = prompt_template.format(prediction) + " Ensure the report is concise, professional, and contains only complete information."
+
     if doctor_notes:
         prompt += f"\nDoctor's Notes: {doctor_notes}"
 
-    # Generate report using Gemini
-    response = gemini_model.generate_content([prompt, gemini_image] if gemini_image else prompt)
+    response = gemini_model.generate_content(prompt)
 
-    # Ensure valid report generation
     raw_report = response.text.strip() if response and response.text else "Report generation failed."
 
-    # Convert Markdown to HTML, then extract plain text
     html_report = markdown.markdown(raw_report)
     soup = BeautifulSoup(html_report, "html.parser")
     plain_text_report = soup.get_text()
 
-    # Save to a file
     report_path = "static/generated_report.txt"
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(plain_text_report)
@@ -163,7 +171,6 @@ def view_report():
         report_content = f.read()
 
     return render_template("view_report.html", report=report_content)
-
 
 @app.route('/download_report')
 def download_report():
